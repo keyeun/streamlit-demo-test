@@ -1,152 +1,205 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import numpy as np
+import seaborn as sb
+from bokeh.plotting import figure
+from streamlit_bokeh import streamlit_bokeh
 
-# 제목 설정
-st.title('코로나19 데이터 대시보드')
 
-# 가상의 데이터 (실제 프로젝트에서는 API나 CSV에서 로드)
-@st.cache_data  # 데이터 캐싱
-def load_data():
-    regions = ['서울', '경기', '부산', '대구', '기타']
-    data = []
-    for day in range(100):
-        date = pd.Timestamp('2023-01-01') + pd.Timedelta(days=day)
-        for region in regions:
-            region_factor = {
-                '서울': 1.5, '경기': 1.3, '부산': 0.8,
-                '대구': 0.7, '기타': 0.5
-            }.get(region, 1.0)
-            new_cases = int((100 + day * 5 + day**1.5) * region_factor)
-            data.append({
-                '날짜': date,
-                '지역': region,
-                '신규확진자': new_cases
-            })
-    df = pd.DataFrame(data)
-    df.sort_values(by=['지역', '날짜'], inplace=True)
-    df['누적확진자'] = df.groupby('지역')['신규확진자'].cumsum()
-    return df
+# st.cache_data를 이용하여 데이터 로딩을 하는 함수
+@st.cache_data
+def load_data(filename):
+    data = pd.read_csv(filename)
+    data.date = pd.to_datetime(data.date)
+    return data
 
-data = load_data()
+# 데이터 로딩
+# df = pd.read_csv("weather-mod.csv") ## 일반적인 방법
+df = load_data("weather-mod.csv") ## st.cache를 이용하는 방법
 
-# 사이드바 - 필터링 옵션
-st.sidebar.header('필터 옵션')
-selected_regions = st.sidebar.multiselect(
-    '지역 선택',
-    options=data['지역'].unique(),
-    default=data['지역'].unique()
+# 홈페이지 타이틀과 설명
+st.title("날씨 데이터 분석")
+st.write(
+    "앞의 강의에서 살펴본 날씨 데이터를 이용하여 데이터를 필터링하고 그래프를 그려보았다. \
+    먼저 분석에 사용한 전체 데이터는 다음과 같다. 데이터를 살펴보려면 아래의 <전체 데이터 보기> 버튼을 눌러보자."
 )
 
-# 날짜 범위 선택 - 에러 방지를 위한 처리 추가
-min_date = data['날짜'].min().date()
-max_date = data['날짜'].max().date()
+# 데이터 테이블 보기. 
+# 테이블을 홈페이지 로딩된 후 바로 보여주지 않고 <전체 데이터 보기> 버튼을 눌렀을 때 보여준다.
+if st.button("전체 데이터 보기"):
+    st.write("### 데이터")
+    st.write("전체 데이터는 2012년 3월 10일 부터 2013년 3월 10일 까지 매일의 날씨를 기록하고 있다.")
+    st.write(pd.DataFrame(df))
 
-try:
-    date_range = st.sidebar.date_input(
-        "날짜 범위 선택",
-        [min_date, max_date],
-        min_value=min_date,
-        max_value=max_date
-    )
-    
-    # 날짜 범위가 완전히 선택되었는지 확인
-    if len(date_range) < 2:
-        st.sidebar.warning("시작일과 종료일을 모두 선택해주세요.")
-        start_date = min_date
-        end_date = max_date
-    else:
-        start_date = date_range[0]
-        end_date = date_range[1]
-except Exception as e:
-    st.sidebar.warning(f"날짜 선택 중 오류가 발생했습니다: {e}")
-    start_date = min_date
-    end_date = max_date
+    # st.expander는 접고 펼칠 수 있는 박스를 그려준다.
+    with st.expander("데이터 설명"):
+        # st.code는 code형식의 데이터를 보여줄 때 사용된다. language='' 옵션을 사용하면 해당 언어에 맞게 칼라코딩을 해준다.
+        st.code(
+            """max_temp : 최고 기온 (˚F) \nmean_temp : 평균 기온 (˚F) \nmin_temp : 최저 기온 (˚F) \nevents : 날씨를 Rain, Snow, Fog, Thunderstorm 으로 기록
+            """
+        )
 
-st.sidebar.info(f"선택된 날짜 범위: {start_date} ~ {end_date}")
+# Markdown 문법을 사용하기 위한 함수
+st.markdown("<hr>", unsafe_allow_html=True)
 
-# 날짜 필터링 적용 함수 - pandas 최신 방식 사용
-def filter_by_date(df, start, end):
-    """날짜 필터링을 적용하는 함수 - 최신 pandas 권장 방식 사용"""
-    # pd.to_datetime을 사용해 날짜 객체를 명시적으로 변환
-    # np.array 사용으로 deprecated 경고 방지
-    dates = np.array(pd.to_datetime(df['날짜']).dt.date)
-    mask = (dates >= start) & (dates <= end)
-    return df.loc[mask]
+# Radio Button 사용 예
+st.markdown("### 날씨 이벤트 선택 (Radio Button)")
+st.write(
+    """
+    데이터는 매일의 날씨 이벤트를 "Rain", "Thunderstorm", "Fog", "Snow"의 네가지로 기록하고 있다.
+    아래의 라디오 버튼을 눌러 이벤트가 포함된 날짜를 확인해보자.
+    """
+)
 
-# 필터링된 데이터
-filtered_data = data[data['지역'].isin(selected_regions)]
-filtered_data = filter_by_date(filtered_data, start_date, end_date)
+selected_item = st.radio("날씨 이벤트 선택", ("Rain", "Thunderstorm", "Fog", "Snow"))	
 
-# 데이터저널리즘 기사 스타일 소개 추가
-st.header('코로나19 추이로 보는 한국의 방역 정책 효과')
-st.markdown("""
-*'데이터로 읽는 코로나19' 시리즈 | 김데이터 기자*
+if selected_item == "Rain":
+    filtered_df = df[df.rain]
+    st.write(pd.DataFrame(filtered_df))
+    st.write("비가 오는 날은 총 {}일입니다.".format(len(filtered_df)))
+elif selected_item == "Thunderstorm":
+    filtered_df = df[df.thunderstorm]
+    st.write(pd.DataFrame(filtered_df))
+    st.write("뇌우가 있던 날은 총 {}일입니다.".format(len(filtered_df)))
+elif selected_item == "Fog":
+    filtered_df = df[df.fog]
+    st.write(pd.DataFrame(filtered_df))
+    st.write("안개가 낀 날은 총 {}일입니다.".format(len(filtered_df)))
+elif selected_item == "Snow":
+    filtered_df = df[df.snow]
+    st.write(pd.DataFrame(filtered_df))
+    st.write("눈이 오는 날은 총 {}일입니다.".format(len(filtered_df)))
 
-지난 100일간 국내 코로나19 확진자 추이를 분석한 결과, 수도권과 비수도권의 확진자 발생 패턴에 뚜렷한 차이가 나타났다. 
-서울과 경기 지역은 높은 인구 밀도에도 불구하고 사회적 거리두기 강화 이후 주간 확진자 증가폭이 크게 둔화되었다. 
-특히, 서울은 1월 중순부터 시행된 강화된 방역조치로 인해 2월 첫째 주부터 신규 확진자가 감소하는 추세를 보였다.
+# 다중선택(multiselect) 사용 예
+st.markdown("### 날씨 이벤트 선택 (다중선택)")
+st.write(
+    """
+    라디오 버튼을 이용한 이벤트의 선택은 한번에 하나씩만 가능했다. 여러개의 이벤트를 선택하기 위해서는 `multiselect`박스를 사용한다. 체크박스를 사용하는 것도 가능하다.
+    """
+)
 
-반면 부산과 대구 지역은 방역수칙 완화 이후 산발적 집단감염이 발생하며 2월 중순부터 
-확진자 수가 증가세로 전환되었다. 전문가들은 "지역별 방역정책의 시행 시기와 강도에 따라 
-확진자 발생 패턴이 달라지고 있다"며 "지역 특성을 고려한 맞춤형 방역 전략이 필요하다"고 지적한다.
+multi_select = st.multiselect('다중선택 박스에서 이벤트를 선택하세요.', ['rain', 'thunderstorm', 'fog', 'snow'])
 
-이번 분석은 중앙방역대책본부와 각 지자체가 제공한 일일 확진자 데이터를 지역별, 시간별로 집계하여 
-패턴을 시각화한 것으로, 방역정책의 효과를 데이터로 검증할 수 있는 토대를 마련했다. 
-아래 대시보드를 통해 지역별 확진자 추이와 시기별 방역정책 변화의 상관관계를 확인할 수 있다.
-""")
+if multi_select:
+    filtered_df = df[["date", "rain", "thunderstorm", "fog", "snow", "events"]]
+    for i in multi_select:
+        filtered_df = filtered_df[filtered_df[i]]
+    st.write(pd.DataFrame(filtered_df))
+    st.write(len(filtered_df))
 
-# 주요 지표 표시
-st.header('주요 지표')
-col1, col2 = st.columns(2)
+st.markdown("<hr>", unsafe_allow_html=True)
+
+# st.line_chart를 이용한 라인그래프
+st.markdown("### 라인그래프 그리기")
+st.write(
+    """
+    streamlit은 기본적인 그래프 그리기 기능을 제공한다. `st.line_chart(_dataframe_)`함수는 라인그래프를 그려준다.  
+    """
+)
+
+st.line_chart(df[["min_temp", "max_temp", "mean_temp"]])
+
+st.write(
+    """
+    `st.line_chart(_dataframe_)`함수는 손쉽게 데이터를 시각화할 수는 있지만 기능의 제한이 있다. \
+    만약 그래프를 세부내용을 좀더 다듬고 인터랙티브한 시각화결과물을 만들고 싶다면 `bokeh`, `vega_lite`, `plotly` 등과 같은 시각화 도구를 이용해보자. \
+    `streamlit`은 파이썬에서 사용가능한 대부분의 시각화 도구를 지원한다.
+    """
+)
+
+st.info('Chart Gallery: https://docs.streamlit.io/library/api-reference/charts')
+
+# Vega-Lite를 이용한 라인 그래프 그리기
+st.markdown("### Vega-Lite로 그린 라인 그래프")
+st.vega_lite_chart(df.reset_index().melt(id_vars=['index'], 
+                                         value_vars=['max_temp', 'min_temp', 'mean_temp'], 
+                                         var_name='Temperature Type', 
+                                         value_name='Temperature'),
+                  {
+                      "mark": {"type": "line", "point": True},
+                      "encoding": {
+                          "x": {"field": "index", "type": "quantitative", "title": "Days"},
+                          "y": {"field": "Temperature", "type": "quantitative", "title": "Temperature (˚F)"},
+                          "color": {
+                              "field": "Temperature Type",
+                              "type": "nominal",
+                              "scale": {
+                                  "domain": ["max_temp", "min_temp", "mean_temp"],
+                                  "range": ["blue", "green", "red"]
+                              },
+                              "title": "Type"
+                          },
+                          "strokeDash": {
+                              "condition": {
+                                  "test": "datum['Temperature Type'] == 'mean_temp'",
+                                  "value": [5, 5]
+                              },
+                              "value": [0]
+                          }
+                      },
+                      "title": "기온변화 추이 그래프"
+                  },
+                  use_container_width=True)
+
+# Bokeh를 이용하여 그린 라인 그래프
+st.markdown("### Bokeh로 그린 라인 그래프")
+fig1 = figure(
+    title='기온변화 추이 그래프',
+    x_axis_label='Days',
+    y_axis_label='Temperature(˚F)'
+)
+
+fig1.line(df.index, df.max_temp, legend_label='최고기온(˚F)', line_width=1, line_color="blue")
+fig1.line(df.index, df.min_temp, legend_label='최저기온(˚F)', line_width=1, line_color="green")
+fig1.line(df.index, df.mean_temp, legend_label='평균기온(˚F)', line_width=1, line_color="red", line_dash="dotted")
+
+# streamlit-bokeh를 사용하여 그래프 렌더링
+streamlit_bokeh(fig1, use_container_width=True, theme="streamlit", key="line_chart")
+
+# 설치 안내
+st.info(
+    "Bokeh의 설치는 `pip install bokeh`로 가능하나 streamlit은 2.4.3 버전까지만 지원한다.  " 
+    "\n만약 최신 버전(>3.6.x)의 bokeh를 사용하고자 한다면, streamlit-bokeh 를 설치해야 한다.  "
+    "\n참고: https://github.com/streamlit/streamlit-bokeh")
+
+# Bokeh를 이용하여 그린 scatter plot
+st.markdown("### Bokeh로 그린 변인들 간의 상관관계")
+st.write(
+    """
+    Streamlit이 제공하는 다양한 웹인터페이스를 활용하여 인터랙티브한 그래프를 그릴 수 있다. 
+    `st.selectbox`를 이용하여 선택할 수 있는 변수의 예를 제시하였다. Regression line의 포함 여부는 `st.checkbox`를 활용하였다.
+    """
+)
+
+# st.columns 을 이용하여 3개의 컬럼을 만들고 콘트롤을 넣어주었다.
+col1, col2, col3 = st.columns(3)
 
 with col1:
-    latest_date = filtered_data['날짜'].max()
-    latest_cases = filtered_data[filtered_data['날짜'] == latest_date]['신규확진자'].sum()
-    
-    # 전날 데이터 계산
-    prev_date = latest_date - pd.Timedelta(days=1)
-    prev_cases = filtered_data[filtered_data['날짜'] == prev_date]['신규확진자'].sum() if prev_date in filtered_data['날짜'].values else 0
-    
-    # 전일 대비 증감 표시
-    delta = latest_cases - prev_cases
-    st.metric("최근 신규 확진자", f"{latest_cases:,}명", f"{delta:+,}")
-
+    choice_x = st.selectbox('X 축의 값을 선택하세요.',
+    ('mean_temp', 'mean_humidity', 'mean_visibility', 'mean_dew', 'mean_wind', 'cloud_cover'))
 with col2:
-    # 최신 날짜의 모든 지역 누적확진자 합계
-    total_cases = filtered_data[filtered_data['날짜'] == latest_date]['누적확진자'].sum()
-    st.metric("누적 확진자", f"{total_cases:,}명")
+    choice_y = st.selectbox('Y 축의 값을 선택하세요.',
+    ('mean_temp', 'mean_humidity', 'mean_visibility', 'mean_dew', 'mean_wind', 'cloud_cover'))
+with col3:
+    reg_line = st.checkbox('Draw Regression Line')
 
-# 시간에 따른 확진자 추이
-st.header('시간에 따른 확진자 추이')
-daily_data = filtered_data.groupby('날짜').sum().reset_index()
-fig = px.line(daily_data, x='날짜', y='신규확진자', title='일별 신규 확진자 추이')
+# 리그레션 라인 (fit line)의 계산
+par = np.polyfit(df[choice_x], df[choice_y], 1, full=True)
+slope=par[0][0]
+intercept=par[0][1]
+y_predicted = [slope*i + intercept  for i in df[choice_x]]
 
-# 방역 정책 시기 강조 (회색 박스로 영역 표시)
-highlight_periods = [
-    {"start": "2023-01-10", "end": "2023-01-25", "label": "거리두기 강화", "color": "LightSalmon"},
-    {"start": "2023-02-05", "end": "2023-02-20", "label": "방역 완화", "color": "LightGreen"},
-]
+# Bokeh를 이용하여 그린 산점도 그래프
+fig2 = figure(width=500, height=500,
+    x_axis_label=choice_x,
+    y_axis_label=choice_y)
+fig2.scatter(df[choice_x], df[choice_y], size=5, color="navy", alpha=0.5)
+if reg_line:
+    fig2.line(df[choice_x],y_predicted,color='red',legend_label='y='+str(round(slope,2))+'x+'+str(round(intercept,2)))
 
-for period in highlight_periods:
-    fig.add_vrect(
-        x0=period["start"], x1=period["end"],
-        fillcolor=period["color"], opacity=0.3,
-        layer="below", line_width=0,
-        annotation_text=period["label"], annotation_position="top left"
-    )
+# streamlit-bokeh를 사용하여 그래프 렌더링
+streamlit_bokeh(fig2, use_container_width=True, theme="streamlit", key="my_unique_key")
 
-st.plotly_chart(fig)
-
-# 지역별 확진자 현황
-st.header('지역별 확진자 현황')
-# 날짜 컬럼을 제외하고 그룹화하여 합산
-region_data = filtered_data.groupby('지역').agg({'신규확진자': 'sum'}).reset_index()
-fig = px.bar(region_data, x='지역', y='신규확진자', title='지역별 확진자 수')
-st.plotly_chart(fig)
-
-# 원본 데이터 표시
-if st.checkbox('원본 데이터 보기'):
-    st.subheader('필터링된 원본 데이터')
-    st.dataframe(filtered_data)
+# Seaborn으로 그린 산점도
+sub_data = df[['mean_temp', 'mean_humidity', 'mean_visibility', 'cloud_cover']]
+st.pyplot(sb.pairplot(sub_data, kind="reg"))
